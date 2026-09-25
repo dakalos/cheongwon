@@ -633,7 +633,20 @@ const SIPSIN_GROUP = {
   '비견':'비겁','겁재':'비겁','식신':'식상','상관':'식상',
   '편재':'재성','정재':'재성','편관':'관성','정관':'관성','편인':'인성','정인':'인성'
 };
-const GROUP_COLOR = {'비겁':'var(--metal)','식상':'var(--fire)','재성':'var(--earth)','관성':'var(--water)','인성':'var(--wood)'};
+const WUXING_GENERATED_BY = {'火':'木','土':'火','金':'土','水':'金','木':'水'};
+const WUXING_CONTROLLED_BY = {'土':'木','金':'火','水':'土','木':'金','火':'水'};
+function getGroupColorByDayElem(dayElem){
+  const map = {
+    '비겁': dayElem,
+    '식상': WUXING_NEXT[dayElem],
+    '재성': WUXING_CONTROL[dayElem],
+    '관성': WUXING_CONTROLLED_BY[dayElem],
+    '인성': WUXING_GENERATED_BY[dayElem]
+  };
+  const colors = {};
+  Object.keys(map).forEach(g=>{ colors[g] = ELEM_COLOR_VAR[map[g]]; });
+  return colors;
+}
 const GROUP_NOTES_ZERO = {
   '비겁':'비겁이 없음 — 스스로 버텨줄 뿌리·동료의 힘이 약할 수 있음. 대운·세운에서 채워지는 시기를 살펴보세요.',
   '식상':'식상이 없음 — 표현력·재능을 발산할 통로가 약함. (여명은 자녀궁도 함께 확인)',
@@ -687,8 +700,9 @@ function buildStructSummary(res, dsi, hasTime){
   if(hasTime && res.hP){ addSip(res.hP.stemIdx); addSip(BR_MAIN_STEM[res.hP.branchIdx]); }
 
   let tallyHtml = '<div style="display:flex;gap:10px;flex-wrap:wrap;">';
+  const groupColors = getGroupColorByDayElem(STEMS_ELEM[dsi]);
   Object.keys(counts).forEach(g=>{
-    tallyHtml += `<div style="background:${GROUP_COLOR[g]};color:#f2e9d8;padding:6px 12px;border-radius:4px;font-size:13px;">${g} ${counts[g]}</div>`;
+    tallyHtml += `<div style="background:${groupColors[g]};color:#f2e9d8;padding:6px 12px;border-radius:4px;font-size:13px;">${g} ${counts[g]}</div>`;
   });
   tallyHtml += '</div>';
   document.getElementById('sipsinTally').innerHTML = tallyHtml;
@@ -1991,12 +2005,96 @@ function buildIdiomSection(res, dsi, hasTime, origList){
   document.getElementById('idiomSection').style.display='block';
 }
 
+/* ===== 삼합/방합/암합 + 핵심 글자 감지 ===== */
+const SAMHAP_TRIADS = [
+  {members:[8,0,4], name:'申子辰(水局)', elem:'水'},
+  {members:[11,3,7], name:'亥卯未(木局)', elem:'木'},
+  {members:[2,6,10], name:'寅午戌(火局)', elem:'火'},
+  {members:[5,9,1], name:'巳酉丑(金局)', elem:'金'}
+];
+const BANGHAP_TRIADS = [
+  {members:[2,3,4], name:'寅卯辰(東方木)', elem:'木'},
+  {members:[5,6,7], name:'巳午未(南方火)', elem:'火'},
+  {members:[8,9,10], name:'申酉戌(西方金)', elem:'金'},
+  {members:[11,0,1], name:'亥子丑(北方水)', elem:'水'}
+];
+const TRIAD_WEAPON = {
+  '水':'유연한 지략과 정보력 — 전략·기획·컨설팅에 강함',
+  '木':'끊임없는 성장 동력 — 개척·확장·교육 분야에 강함',
+  '火':'응집된 추진력과 존재감 — 리더십·대중 앞에 서는 일에 강함',
+  '金':'예리하게 벼려진 결단력 — 전문직·심사·정밀 기술에 강함'
+};
+function detectTriads(pillarList, pillarLabels, triadDefs, triadName){
+  const rows = [];
+  const branchOwners = {}; // branchIdx -> [labels]
+  pillarList.forEach((p,i)=>{
+    if(!p) return;
+    if(!branchOwners[p.branchIdx]) branchOwners[p.branchIdx]=[];
+    branchOwners[p.branchIdx].push(pillarLabels[i]);
+  });
+  triadDefs.forEach(t=>{
+    const present = t.members.filter(m=>branchOwners[m]);
+    if(present.length>=2){
+      const detail = present.map(m=>`${branchOwners[m].join('/')}${BR_H[m]}`).join(', ');
+      const level = present.length===3 ? '완전' : '반';
+      rows.push({text:`<strong>[${detail} ${level}${triadName}]</strong> ➔ ${t.name} — ${TRIAD_WEAPON[t.elem]}${present.length===2?' (2/3만 갖춰진 반합, 나머지 글자가 대운에서 오면 완전해짐)':''}`,
+        labels: present.flatMap(m=>branchOwners[m])});
+    }
+  });
+  return rows;
+}
+function detectAmhap(pillarList, pillarLabels){
+  const rows = [];
+  for(let i=0;i<pillarList.length;i++){
+    if(!pillarList[i]) continue;
+    for(let j=0;j<pillarList.length;j++){
+      if(i===j || !pillarList[j]) continue;
+      const visibleStem = pillarList[i].stemIdx;
+      const hiddenStems = JANGGAN[pillarList[j].branchIdx];
+      hiddenStems.forEach(hs=>{
+        if(STEM_HAP[visibleStem]===hs){
+          rows.push({text:`<strong>[${pillarLabels[i]} ${STEMS_H[visibleStem]} ↔ ${pillarLabels[j]}(${BR_H[pillarList[j].branchIdx]}) 지장간 ${STEMS_H[hs]} 암합]</strong> ➔ 겉으로 안 보이지만 은밀하게 이어지는 인연·연결의 힘. 드러내지 않고 실리를 챙기는 능력`,
+            labels:[pillarLabels[i], pillarLabels[j]]});
+        }
+      });
+    }
+  }
+  return rows;
+}
+function findCoreCharacter(pillarList, pillarLabels, dsi, origList){
+  const degree = {};
+  pillarLabels.forEach(l=>degree[l]=0);
+  for(let i=0;i<origList.length;i++){
+    for(let j=i+1;j<origList.length;j++){
+      const hits = checkRelations(origList[i].stemIdx, origList[i].branchIdx, [origList[j]]);
+      if(hits.length){ degree[origList[i].label.split('(')[0]] = (degree[origList[i].label.split('(')[0]]||0) + hits.length; degree[origList[j].label.split('(')[0]] = (degree[origList[j].label.split('(')[0]]||0) + hits.length; }
+    }
+  }
+  const best = Object.keys(degree).sort((a,b)=>degree[b]-degree[a])[0];
+  return {label: best, count: degree[best]};
+}
+
 function buildStrengthCard(res, dsi, counts, hasTime, origList){
   const points = [];
   const pillarLabels = ['년주','월주','일주','시주'];
   const pillarList = [res.yP, res.mP, res.dP, hasTime?res.hP:null];
 
   points.push(buildDayPillarArchetype(res, dsi));
+
+  // 핵심 글자 (가장 많은 관계를 맺는 자리)
+  const core = findCoreCharacter(pillarList, pillarLabels, dsi, origList);
+  if(core.count>0){
+    const corePillar = {'년주':res.yP,'월주':res.mP,'일주':res.dP,'시주':res.hP}[core.label];
+    if(corePillar){
+      points.push(`<strong>[핵심 글자: ${core.label} ${STEMS_H[corePillar.stemIdx]}${BR_H[corePillar.branchIdx]}]</strong> ➔ 원국 안에서 가장 많은 관계(${core.count}개)를 맺고 있는 자리 — 이 사주의 무게중심이자 가장 강하게 쓰이는 무기`);
+    }
+  }
+
+  // 방합/삼합
+  detectTriads(pillarList, pillarLabels, SAMHAP_TRIADS, '삼합').forEach(r=>points.push(r.text));
+  detectTriads(pillarList, pillarLabels, BANGHAP_TRIADS, '방합').forEach(r=>points.push(r.text));
+  // 암합
+  detectAmhap(pillarList, pillarLabels).forEach(r=>points.push(r.text));
 
   // 1) 간여지동 — 원국 각 기둥 검사
   pillarList.forEach((p,i)=>{
